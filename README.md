@@ -1,5 +1,8 @@
 # Cryptojacking Detector
 
+[![CI](https://github.com/jamesbairdjr88-star/cryptojack-detector/actions/workflows/ci.yml/badge.svg)](https://github.com/jamesbairdjr88-star/cryptojack-detector/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A host-based tool that detects **unauthorized crypto miners** (cryptojacking) on a
 machine you own or are authorized to monitor. It is **read-only** — it scores and
 reports suspicious processes and persistence entries; it never kills anything.
