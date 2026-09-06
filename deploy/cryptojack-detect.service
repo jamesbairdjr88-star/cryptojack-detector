@@ -1,0 +1,31 @@
+# systemd unit for continuous, read-only cryptojacking monitoring.
+#
+# Install:
+#   sudo cp deploy/cryptojack-detect.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now cryptojack-detect
+#   journalctl -u cryptojack-detect -f      # watch alerts
+#
+# Runs as root so it can see every process and read system persistence
+# (cron, systemd units). Set a real --webhook to get alerts off the box.
+
+[Unit]
+Description=Cryptojacking detector (read-only monitoring)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cryptojack-detect watch --interval 300 --cooldown 3600
+Restart=on-failure
+RestartSec=10
+
+# Hardening: this tool never writes to the system, so lock it down.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+# PrivateTmp must stay false so the detector can see miners hiding in /tmp.
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target

@@ -277,3 +277,130 @@ def run_daemon(interval=60, cooldown=3600, webhook_url=None, iterations=None,
             time.sleep(interval)
     except KeyboardInterrupt:
         print("daemon stopped")
+
+
+__version__ = "1.0.0"
+
+
+# ---------------- Command-line interface ----------------
+def _print_findings(rows, fmt):
+    if fmt == "json":
+        print(emit_json(rows))
+    elif fmt == "log":
+        print(emit_log(rows))
+    else:
+        print_report(rows)
+
+
+def _print_persistence(pf, as_json=False):
+    if as_json:
+        print(json.dumps([{"band": b, "source": s, "entry": t, "reasons": w}
+                          for b, s, t, w in pf]))
+        return
+    if not pf:
+        print("No suspicious persistence entries.")
+        return
+    for band, src, text, why in pf:
+        print("%-4s %s :: %s" % (band, os.path.basename(src), why))
+        print("      -> " + text)
+
+
+def cli(argv=None):
+    import argparse
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--nvidia-smi", metavar="PATH", dest="nvidia_smi",
+                        help="path to nvidia-smi (also settable via CRYPTOJACK_NVIDIA_SMI)")
+    common.add_argument("--windows", type=int, default=WINDOWS,
+                        help="CPU sampling windows (default %(default)s)")
+    common.add_argument("--window-seconds", type=float, default=WINDOW_S,
+                        dest="window_seconds",
+                        help="seconds per CPU sampling window (default %(default)s)")
+
+    ap = argparse.ArgumentParser(
+        prog="cryptojack-detect",
+        description=("Host-based cryptojacking detector (read-only). Scores running "
+                     "processes and autostart entries on multiple signals and reports "
+                     "them; it never terminates or changes anything."))
+    ap.add_argument("--version", action="version",
+                    version="cryptojack-detect " + __version__)
+    sub = ap.add_subparsers(dest="command")
+
+    def add_format(p):
+        g = p.add_mutually_exclusive_group()
+        g.add_argument("--json", action="store_const", const="json", dest="fmt",
+                       help="emit findings as JSON Lines (for a SIEM)")
+        g.add_argument("--log", action="store_const", const="log", dest="fmt",
+                       help="emit findings as syslog-style lines")
+
+    def add_webhook(p):
+        p.add_argument("--webhook", metavar="URL",
+                       help="POST qualifying findings to this webhook")
+        p.add_argument("--min-band", choices=["MED", "HIGH"], default="HIGH",
+                       dest="min_band",
+                       help="minimum band to send to the webhook (default %(default)s)")
+
+    p_scan = sub.add_parser("scan", parents=[common],
+                            help="run one scan of live processes (default)")
+    add_format(p_scan); add_webhook(p_scan)
+    p_scan.add_argument("--persistence", action="store_true",
+                        help="also enumerate autostart persistence entries")
+    p_scan.add_argument("--exit-zero", action="store_true", dest="exit_zero",
+                        help="always exit 0 (default: exit 1 when a HIGH finding is present)")
+
+    p_watch = sub.add_parser("watch", parents=[common],
+                             help="run continuously as a rate-limited daemon")
+    add_webhook(p_watch)
+    p_watch.add_argument("--interval", type=float, default=60.0,
+                         help="seconds between scans (default %(default)s)")
+    p_watch.add_argument("--cooldown", type=float, default=3600.0,
+                         help="min seconds between repeat alerts for one finding (default %(default)s)")
+    p_watch.add_argument("--no-persistence", action="store_true", dest="no_persistence",
+                         help="skip persistence enumeration each cycle")
+    p_watch.add_argument("--quiet", action="store_true",
+                         help="print only alerts, not per-scan summaries")
+
+    p_persist = sub.add_parser("persistence", help="scan autostart vectors only")
+    add_format(p_persist)
+
+    args = ap.parse_args(argv)
+
+    globals()["WINDOWS"] = getattr(args, "windows", WINDOWS)
+    globals()["WINDOW_S"] = getattr(args, "window_seconds", WINDOW_S)
+    if getattr(args, "nvidia_smi", None):
+        os.environ["CRYPTOJACK_NVIDIA_SMI"] = args.nvidia_smi
+
+    command = args.command or "scan"
+
+    if command == "scan":
+        rows = scan()
+        _print_findings(rows, getattr(args, "fmt", None) or "table")
+        if getattr(args, "persistence", False):
+            print()
+            print("PERSISTENCE")
+            _print_persistence(scan_persistence())
+        wh = getattr(args, "webhook", None)
+        if wh:
+            n = post_webhook(rows, wh, min_band=getattr(args, "min_band", "HIGH"))
+            print("(posted %d finding(s) to webhook)" % n)
+        if getattr(args, "exit_zero", False):
+            return 0
+        return 1 if any(r[0] for r in rows) else 0
+
+    if command == "persistence":
+        pf = scan_persistence()
+        _print_persistence(pf, as_json=(getattr(args, "fmt", None) == "json"))
+        return 1 if any(b == "HIGH" for b, _, _, _ in pf) else 0
+
+    if command == "watch":
+        run_daemon(interval=args.interval, cooldown=args.cooldown,
+                   webhook_url=getattr(args, "webhook", None),
+                   include_persistence=not getattr(args, "no_persistence", False),
+                   verbose=not getattr(args, "quiet", False))
+        return 0
+
+    return 0
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    _sys.exit(cli())
