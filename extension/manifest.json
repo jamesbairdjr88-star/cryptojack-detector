@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Cryptojack Drive-by Detector",
+  "version": "1.0.0",
+  "description": "Warns you when a web page runs an in-browser (Coinhive-style) crypto miner. Read-only: it never blocks or changes pages.",
+  "permissions": ["storage", "tabs"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Cryptojack Drive-by Detector"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["signatures.js", "inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["signatures.js", "content.js"],
+      "run_at": "document_idle",
+      "world": "ISOLATED",
+      "all_frames": true
+    }
+  ]
+}

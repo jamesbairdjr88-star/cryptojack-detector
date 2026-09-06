@@ -81,5 +81,19 @@ def main():
     print("RESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 
+def _run_browser_suite():
+    # Keep CI's single `python test_detector.py` command covering the
+    # browser detector too: run its suite and propagate a failure.
+    here = os.path.dirname(os.path.abspath(__file__))
+    bt = os.path.join(here, "test_browser_detector.py")
+    if not os.path.exists(bt):
+        return 0
+    print("\n=== browser detector suite ===")
+    return subprocess.run([sys.executable, bt], cwd=here).returncode
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    rc = main()
+    if rc == 0:
+        rc = _run_browser_suite()
+    sys.exit(rc)

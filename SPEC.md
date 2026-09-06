@@ -193,7 +193,38 @@ Demo (miner running continuously, `interval=0.2s`, `cooldown=3s`): one alert, se
 - **Phase 2 — Harden the signals.** Mostly done. Suspicious-path signal and multi-sample sustained CPU shipped. Remaining: a live pool-domain/IP threat feed.
 - **Phase 3 — Persistence + GPU.** Done for Linux/macOS. GPU sensor via `nvidia-smi pmon`; persistence enumeration across cron, systemd, autostart, shell rc. Remaining: Windows autostart vectors (Task Scheduler, Run keys).
 - **Phase 4 — Alerting + allowlist.** Done. Trusted-app allowlist, adaptive CPU floor, JSON/syslog/webhook output, and a continuous daemon with cooldown-based alert rate-limiting.
-- **Stretch — browser cryptojacking.** Separate detector for drive-by mining: a single tab pinning CPU + WebAssembly usage.
+## Drive-by (in-browser) cryptojacking — implemented
+
+Signal 7 in the table above (browser-based mining) needs a different vantage point
+than the host detector: the miner is a script inside a tab, not a process on the box.
+It ships as its own module with the same "score by signal strength, HIGH only on a
+strong signal" philosophy:
+
+- **`browser_detect.py`** — a static analyzer/CLI that scores a page's *code*
+  (external script `src`s, inline `<script>` bodies, and network endpoints), never
+  its visible prose. Strong signals: a known miner script/library signature and a
+  mining-pool or stratum-over-WebSocket endpoint. Weak signals: WebAssembly usage,
+  Web Worker fan-out across cores, and hashing-loop markers. HIGH requires a strong
+  signal; exit `0`/`1` mirror the host detector.
+- **`extension/`** — a Manifest V3 browser extension (Chromium 111+) that is the
+  live, client-side detector. A MAIN-world hook observes `WebSocket` / `WebAssembly`
+  / `Worker` use (observe-only, blocks nothing), an isolated content script statically
+  scans script tags, and findings surface as a page banner, a toolbar badge, and a
+  popup verdict. It sends nothing off the device.
+
+**Evaluation.** `test_browser_detector.py` runs labeled page fixtures and asserts
+Precision 1.00 / Recall 1.00 / F1 1.00: three miner pages (classic Coinhive loader,
+a WASM+WebSocket miner, an AuthedMine proxy) score HIGH, while benign look-alikes —
+including a legitimate WebAssembly game and a security blog whose *prose* mentions
+"coinhive" — do not. The harness is chained into `test_detector.py`, so CI's single
+test command exercises both detectors on every push.
+
+**Debugging write-up — code, not prose.** An early version matched signature strings
+anywhere in the fetched HTML, so a blog post *about* Coinhive tripped a strong signal
+(a false positive). Fix: the analyzer now only scores strings in script context
+(script `src` attributes, inline script bodies, and endpoints) — the same lesson as
+the host detector learning not to flag "xmrig" appearing in an unrelated command
+argument. Recall held at 1.00 and the false positive disappeared.
 
 ---
 

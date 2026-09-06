@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font: 13px system-ui, -apple-system, sans-serif; width: 300px; margin: 0; padding: 12px; }
+    h1 { font-size: 14px; margin: 0 0 10px; }
+    .band { font-weight: 700; padding: 2px 8px; border-radius: 4px; color: #fff; display: inline-block; }
+    .HIGH { background: #b00020; }
+    .MED { background: #b06f00; }
+    .OK { background: #2e7d32; }
+    ul { margin: 8px 0 0; padding-left: 18px; }
+    li { margin: 2px 0; }
+    .url { color: #666; word-break: break-all; margin-top: 8px; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <h1>Cryptojack Drive-by Detector</h1>
+  <div id="verdict">Scanning...</div>
+  <ul id="reasons"></ul>
+  <div class="url" id="url"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cryptojack-detector"
 version = "1.0.0"
-description = "Host-based, read-only cryptojacking detector with multi-signal scoring, alerting, and a monitoring daemon"
+description = "Read-only cryptojacking detection: a host-based process detector (CLI + daemon) and a drive-by (in-browser) detector, with multi-signal scoring and alerting"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [{ name = "James Baird" }]
-keywords = ["security", "cryptojacking", "cryptomining", "detection", "blue-team", "psutil"]
+keywords = ["security", "cryptojacking", "cryptomining", "detection", "blue-team", "psutil", "browser", "drive-by"]
 dependencies = ["psutil>=5.9"]
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -26,6 +26,7 @@ Issues = "https://github.com/jamesbairdjr88-star/cryptojack-detector/issues"
 
 [project.scripts]
 cryptojack-detect = "cryptojack_detect:cli"
+browser-detect = "browser_detect:cli"
 
 [tool.setuptools]
-py-modules = ["cryptojack_detect"]
+py-modules = ["cryptojack_detect", "browser_detect"]

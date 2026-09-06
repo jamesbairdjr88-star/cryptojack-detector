@@ -3,66 +3,87 @@
 [![CI](https://github.com/jamesbairdjr88-star/cryptojack-detector/actions/workflows/ci.yml/badge.svg)](https://github.com/jamesbairdjr88-star/cryptojack-detector/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A host-based tool that detects **unauthorized crypto miners** (cryptojacking) on a
-machine you own or are authorized to monitor. It is **read-only** — it scores and
-reports suspicious processes and persistence entries; it never kills anything.
-A human decides what to do.
+Read-only tooling that detects **unauthorized crypto miners** on machines you own
+or are authorized to monitor. Two complementary detectors, one signature philosophy:
+
+- **Host detector** (`cryptojack_detect.py`) — finds miner *processes* on a machine.
+- **Drive-by detector** (`browser_detect.py` + a browser extension) — finds *in-browser*
+  (Coinhive-style WASM) miners running in a web page.
+
+Both score by *signal strength* and only escalate to **HIGH** when a strong,
+miner-specific signal is present — the rule that keeps false positives near zero.
+Everything is read-only: it reports and scores, and never kills processes, blocks
+requests, or changes anything. A human decides what to do.
 
 This is the defender's side of crypto mining: the skill security teams actually hire for.
 
 ## Results
 
-On a labeled adversarial test set (miners including a throttled miner and an
-off-CPU GPU-style miner, plus benign look-alikes): **Precision 1.00 / Recall 1.00 / F1 1.00**.
-`test_detector.py` reproduces a green run (exit code 0) on any 2+ core Linux box.
+Both detectors ship with reproducible, labeled test harnesses that assert
+**Precision 1.00 / Recall 1.00 / F1 1.00**, and both run in CI on every push:
+
+- Host: `test_detector.py` — miners (incl. throttled + off-CPU GPU) vs benign look-alikes.
+- Drive-by: `test_browser_detector.py` — Coinhive/WASM miner pages vs benign pages
+  (incl. a legit WASM game and a security blog that only *mentions* "coinhive" in prose).
 
 ## Install
 
 ```bash
-pip install .                 # from a clone; installs the `cryptojack-detect` command
+pip install .                 # installs the `cryptojack-detect` and `browser-detect` commands
 # or run without installing:
 pip install -r requirements.txt
 python cryptojack_detect.py --help
+python browser_detect.py --help
 ```
 
-Requires Python 3.8+ and `psutil`. The optional GPU signal uses `nvidia-smi` if present.
+Requires Python 3.8+ and `psutil` (host detector). The drive-by analyzer is pure
+stdlib. The optional host GPU signal uses `nvidia-smi` if present.
 
-## Usage
+## Host detector — usage
 
 ```bash
 cryptojack-detect scan                 # one scan; ranked table of suspects
 cryptojack-detect scan --json          # JSON Lines (for a SIEM)
-cryptojack-detect scan --log           # syslog-style lines
 cryptojack-detect scan --persistence   # also enumerate autostart entries
 cryptojack-detect persistence          # scan cron/systemd/autostart/rc only
-cryptojack-detect watch                # run continuously as a rate-limited daemon
-cryptojack-detect --version
+cryptojack-detect watch --webhook URL  # continuous, rate-limited monitoring
 ```
 
-**Alerting.** Any command that produces findings can POST them to a webhook
-(Slack/PagerDuty/generic), HIGH-only by default:
+Signals: adaptive-floor sustained CPU, miner name/arg signatures, mining-pool
+connections, suspicious paths, GPU compute (`nvidia-smi`), and persistence
+enumeration, with a trusted-app allowlist. **Exit codes:** `0` clean, `1` a HIGH
+finding, `2` usage error — cron/CI-friendly. A hardened systemd unit lives in
+`deploy/cryptojack-detect.service`.
+
+## Drive-by (in-browser) detector
+
+Catches web pages that mine crypto in the visitor's browser. Two pieces share one
+signature list:
+
+**1. Static analyzer / CLI** — scans a page's *code* (script srcs, inline JS, network
+endpoints), never its visible text, so a blog that merely mentions "coinhive" is
+never flagged:
 
 ```bash
-cryptojack-detect scan  --webhook https://hooks.slack.com/services/XXX
-cryptojack-detect watch --webhook https://hooks.slack.com/services/XXX --interval 300 --cooldown 3600
+browser-detect page.html               # scan a saved page
+browser-detect --url https://site.tld  # fetch and scan a live page
+browser-detect --url https://site.tld --fetch-scripts   # also scan external JS
+browser-detect page.html --json        # JSON output
 ```
 
-**Exit codes** (so it drops into cron / CI / monitoring):
+Signals — **strong:** miner script/library signature, mining-pool or
+stratum-over-WebSocket endpoint; **weak:** WebAssembly usage, Web Worker fan-out
+across cores, hashing-loop markers. HIGH requires a strong signal. Exit `0`/`1`
+like the host detector.
 
-| Code | Meaning |
-|------|---------|
-| `0`  | no HIGH findings (clean) |
-| `1`  | at least one HIGH finding — a likely miner |
-| `2`  | usage error |
+**2. Browser extension** (`extension/`, Manifest V3, Chromium 111+) — the live,
+client-side detector. It hooks `WebSocket` / `WebAssembly` / `Worker` in the page
+(observe-only), statically scans script tags, warns with a page banner + toolbar
+badge, and shows the verdict in a popup. Load it unpacked via
+`chrome://extensions → Developer mode → Load unpacked → select extension/`.
+See `extension/README.md`. It blocks nothing and sends nothing off your device.
 
-Use `scan --exit-zero` if you want alerts via webhook but always a 0 exit.
-
-**Tuning.** `--windows` / `--window-seconds` control CPU sampling; `--nvidia-smi PATH`
-(or the `CRYPTOJACK_NVIDIA_SMI` env var) points at a non-standard `nvidia-smi`.
-
-## Run it as a service
-
-A hardened systemd unit is included:
+## Run the host detector as a service
 
 ```bash
 sudo cp deploy/cryptojack-detect.service /etc/systemd/system/
@@ -71,51 +92,36 @@ sudo systemctl enable --now cryptojack-detect
 journalctl -u cryptojack-detect -f      # watch alerts
 ```
 
-## How it works
-
-It combines several independent signals and scores by *strength*, not just count.
-**Strong** signals (a miner name/arg signature, a mining-pool connection) are specific
-to miners; **weak** signals (sustained CPU, suspicious path, GPU compute) are tripped by
-legitimate software too. A finding is escalated to **HIGH** only when a strong signal is
-present — two weak signals alone never escalate. That single rule is what keeps false
-positives near zero.
-
-Signals implemented:
-
-- Sustained CPU with an **adaptive, contention-aware floor** (no magic threshold; scales with core count and load)
-- Known miner **name / argument signatures**
-- **Mining-pool** port connections
-- **Suspicious binary paths** (`/tmp`, `/dev/shm`, `/var/tmp`, hidden dot-binaries)
-- **GPU compute** via `nvidia-smi pmon` (catches off-CPU GPU miners)
-- **Persistence enumeration** (cron, systemd, desktop autostart, shell rc)
-- **Trusted-app allowlist** (compilers, ffmpeg, node, ...) — only when run from a trusted install dir
-
 ## Files
 
-- `cryptojack_detect.py` — the detector + CLI: collectors, scoring engine, output/alerting, daemon
-- `test_detector.py` — reproducible precision/recall harness (spawns a labeled process set)
-- `SPEC.md` — full project spec: design, phased build, evaluations, and two debugging write-ups
-- `pyproject.toml` — packaging; installs the `cryptojack-detect` command
-- `deploy/cryptojack-detect.service` — hardened systemd unit for the daemon
+- `cryptojack_detect.py` — host detector + CLI: collectors, scoring engine, output/alerting, daemon
+- `test_detector.py` — host precision/recall harness (also runs the browser suite, so one command covers both in CI)
+- `browser_detect.py` — drive-by (in-browser) static analyzer + CLI
+- `test_browser_detector.py` — drive-by precision/recall harness (labeled page fixtures)
+- `extension/` — Manifest V3 browser extension (the live drive-by detector)
+- `SPEC.md` — full project spec: design, phased build, evaluations, and debugging write-ups
+- `pyproject.toml` — packaging; installs the `cryptojack-detect` and `browser-detect` commands
+- `deploy/cryptojack-detect.service` — hardened systemd unit for the host daemon
 - `requirements.txt`, `LICENSE`, `.gitignore`
 
 ## Engineering highlights (for reviewers)
 
-Two debugging stories are written up in `SPEC.md`:
+Debugging stories are written up in `SPEC.md`:
 
-1. **Load-dependent CPU threshold.** Recall dropped to 0.33 on a 2-core box because a
-   fixed 70%-of-one-core threshold missed miners that were throttled by contention.
-   Root-caused by instrumenting the sampler, then replaced with an adaptive fair-share
-   floor → recall recovered to 1.00 with precision held at 1.00.
-2. **Silent-sensor bug.** The GPU collector swallowed `FileNotFoundError` / exec errors,
-   so a *broken* sensor looked identical to "no GPU present." Fixed to fail loudly with a
-   `CRYPTOJACK_NVIDIA_SMI` override. A security sensor that fails silently is worse than
-   one that fails loudly.
+1. **Load-dependent CPU threshold.** Host recall dropped to 0.33 on a 2-core box
+   because a fixed 70%-of-one-core threshold missed contended miners. Root-caused,
+   then replaced with an adaptive fair-share floor → recall 1.00, precision held.
+2. **Silent-sensor bug.** The GPU collector swallowed errors, so a *broken* sensor
+   looked identical to "no GPU present." Fixed to fail loudly.
+3. **Code-not-prose matching (drive-by).** The browser analyzer scores only script
+   context, so a security article about Coinhive is never a false positive — the
+   same lesson as the host detector's "mentions xmrig in an argument" case.
 
 ## Scope & ethics
 
-Run this only on systems you own or are authorized to monitor. It is read-only by
-design: it reports and scores, and never terminates processes or edits configuration.
+Run these only on systems you own or are authorized to monitor. Both detectors are
+read-only by design: they report and score, and never terminate processes, block
+requests, or edit configuration.
 
 ## License
 
